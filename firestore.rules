@@ -1,0 +1,107 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 's6710380117@pkru.ac.th' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Admin collection
+    match /admins/{adminId} {
+      allow get: if isSignedIn() && (request.auth.uid == adminId || isAdmin());
+      allow list: if isAdmin();
+      allow write: if isAdmin() || (isSignedIn() && request.auth.token.email == 's6710380117@pkru.ac.th');
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow get: if true;
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(userId) && request.auth.uid == userId
+                    && (incoming().role == 'member' || isAdmin())
+                    && incoming().status == 'active';
+      allow update: if isSignedIn() && isValidId(userId) && (
+        (request.auth.uid == userId && incoming().role == existing().role && incoming().status == existing().status)
+        || isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    // Resources collection
+    match /resources/{resourceId} {
+      allow get: if existing().status == 'published'
+                 || (isSignedIn() && (existing().authorId == request.auth.uid || isAdmin()));
+      allow list: if resource.data.status == 'published'
+                  || (isSignedIn() && (resource.data.authorId == request.auth.uid || isAdmin()));
+      allow create: if isSignedIn() && isValidId(resourceId)
+                    && incoming().authorId == request.auth.uid
+                    && incoming().title is string && incoming().title.size() <= 200
+                    && incoming().description is string && incoming().description.size() <= 10000;
+      allow update: if isSignedIn() && isValidId(resourceId) && (
+        (existing().authorId == request.auth.uid && incoming().authorId == existing().authorId)
+        || isAdmin()
+      );
+      allow delete: if isSignedIn() && isValidId(resourceId) && (
+        existing().authorId == request.auth.uid || isAdmin()
+      );
+    }
+
+    // Favorites collection
+    match /favorites/{favoriteId} {
+      allow get: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(favoriteId)
+                    && incoming().userId == request.auth.uid;
+      allow delete: if isSignedIn() && isValidId(favoriteId) && (
+        existing().userId == request.auth.uid || isAdmin()
+      );
+    }
+
+    // Reports collection
+    match /reports/{reportId} {
+      allow get, list: if isAdmin();
+      allow create: if isSignedIn() && isValidId(reportId)
+                    && incoming().reporterId == request.auth.uid
+                    && incoming().reason is string;
+      allow update, delete: if isAdmin();
+    }
+
+    // Moderation Logs collection
+    match /moderationLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && isValidId(logId);
+      allow update, delete: if false;
+    }
+
+    // Settings collection
+    match /settings/{settingDoc} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+  }
+}
